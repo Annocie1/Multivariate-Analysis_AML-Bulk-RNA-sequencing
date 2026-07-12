@@ -1,0 +1,292 @@
+setwd("~/Documents/Modules/BIOL5421/assessment/part2/BIOL 5421 assessment 2/All four, combo,DMSO,BETI,MDM2I")
+pacman::p_load (ggplot2, ggrepel, reshape2,  amap, clusterProfiler, org.Hs.eg.db, STRINGdb,devEMF,eulerr,factoextra,svglite,ggthemes)
+
+
+ss = read.table("~/Documents/Modules/BIOL5421/assessment/part2/part2_datasets/P53_activation_AML/SS.csv", header = TRUE, sep="\t")
+em = read.table("~/Documents/Modules/BIOL5421/assessment/part2/part2_datasets/P53_activation_AML/EM.csv", header = TRUE, row.names = 1, sep="\t")
+de_b_v_d=read.table("~/Documents/Modules/BIOL5421/assessment/part2/part2_datasets/P53_activation_AML/DE_BETI_vs_DMSO.csv",header = TRUE, row.names = 1, sep="\t")
+de_m_v_d=read.table("~/Documents/Modules/BIOL5421/assessment/part2/part2_datasets/P53_activation_AML/DE_MDM2I_vs_DMSO.csv",header = TRUE, row.names = 1, sep="\t")
+de_c_v_d=read.table("~/Documents/Modules/BIOL5421/assessment/part2/part2_datasets/P53_activation_AML/DE_Combo_vs_DMSO.csv",header = TRUE, row.names = 1, sep="\t")
+anno=read.table("~/Documents/Modules/BIOL5421/assessment/part2/part2_datasets/P53_activation_AML/ANNO.csv",header = TRUE, row.names = 1, sep="\t")
+source("~/Documents/Modules/BIOL5421/assessment/part2/BIOL 5421 assessment 2/function.r")
+
+#chromosome positions splliting in annotations table
+anno$chromosome = sub(":.*", "", anno$LOCUS)
+anno$start = as.numeric(sub(".*:(.*)-.*", "\\1", anno$LOCUS))
+anno$end   = as.numeric(sub(".*-(.*)", "\\1", anno$LOCUS))
+anno$position = (anno$start + anno$end) / 2
+
+#adding a sig column to each of the two de tables
+de_b_v_d$sig = as.factor(de_b_v_d$p.adj < 0.05 & abs(de_b_v_d$log2fold) > 1)
+de_m_v_d$sig= as.factor(de_m_v_d$p.adj < 0.05 & abs(de_m_v_d$log2fold) > 1)
+de_c_v_d$sig= as.factor(de_c_v_d$p.adj < 0.05 & abs(de_c_v_d$log2fold) > 1)
+
+
+# merging the three DE tables
+master_de= merge(de_b_v_d, de_m_v_d, by=0, suffixes=c(".b_v_d",".m_v_d"))
+names(de_c_v_d)=c("log2fold.c_v_d","p.c_v_d","p.adj.c_v_d","sig.c_v_d")
+master= merge(master_de, de_c_v_d, by.x=1, by.y=0)
+
+master_temp=merge(em,anno, by.x=0, by.y=0)
+master=merge(master_temp,master, by.x=1,by.y=1)  
+
+row.names(master) = master$SYMBOL
+master=na.omit(master[,-1])
+
+#em_symbols and em scaled
+em_symbols = master[ss$SAMPLE]
+em_scaled = na.omit(data.frame(t(scale(t(em_symbols)))))
+ss$SAMPLE_GROUP = factor(ss$SAMPLE_GROUP, levels=c("DMSO", "BETI", "MDM2I","Combo"))
+
+#List of the vectors of significant genes
+sig_b_v_d = row.names(subset(master, sig.b_v_d == TRUE ))
+sig_m_v_d = row.names(subset(master, sig.m_v_d == TRUE ))
+sig_combo = row.names(subset(master, sig.c_v_d == TRUE ))
+
+sig_b_v_d_only = row.names(subset(master, sig.b_v_d == TRUE & sig.m_v_d == FALSE & sig.c_v_d== FALSE))
+sig_m_v_d_only = row.names(subset(master, sig.m_v_d == TRUE & sig.b_v_d == FALSE &  sig.c_v_d== FALSE))
+sig_combo_only=row.names(subset(master, sig.c_v_d == TRUE & sig.m_v_d == FALSE & sig.b_v_d== FALSE))
+sig_all = row.names(subset(master, sig.b_v_d== TRUE & sig.m_v_d == TRUE & sig.c_v_d == TRUE ))
+sig_any=row.names(subset(master, sig.b_v_d== TRUE | sig.m_v_d == TRUE | sig.c_v_d == TRUE ))
+
+em_sig_any =em_scaled[sig_any,]
+
+sample_group_colours = c(DMSO = "deepskyblue",BETI = "deeppink2", MDM2I = "darkorchid1",Combo = "darkgreen")
+sample_group_label = c(DMSO = "DMSO",BETI = "BETI",MDM2I = "MDM2I",Combo = "Combo")
+
+write.table(master, file="~/Documents/Modules/BIOL5421/assessment/part2/BIOL 5421 assessment 2/All four, combo,DMSO,BETI,MDM2I/master.csv", sep="\t")
+write.table(em_sig_any, file="~/Documents/Modules/BIOL5421/assessment/part2/BIOL 5421 assessment 2/All four, combo,DMSO,BETI,MDM2I/em_sig_any.csv", sep="\t")
+
+
+##################### Expression density plot########################################
+#To make density plots color-coded (sample_group)
+
+em.m= melt(em)
+em.m$sample_group = ""
+
+indeces = grep("DMSO",em.m$variable)
+em.m$sample_group[indeces] = "DMSO"
+
+indeces = grep("BETI",em.m$variable)
+em.m$sample_group[indeces] = "BETI"
+
+indeces = grep("MDM2I",em.m$variable)
+em.m$sample_group[indeces] = "MDM2I"
+
+indeces = grep("Combo",em.m$variable)
+em.m$sample_group[indeces] = "Combo"
+
+density_plot=ggplot(em.m, aes(x=log10(value+0.01),fill = sample_group))+
+  geom_density(size= 1)+
+  scale_fill_manual(values=sample_group_colours, label = sample_group_label)+
+  facet_wrap(~variable, ncol=3)+
+  labs(title="Gene expression:Treated vs Untreated in AML stem cells.", x= "Expression(log10) ", y="Gene expression density")+
+  plot_theme
+density_plot
+save_plot(density_plot,"Expression Density.svg",6,6)
+
+################################################################################################
+#Correlation heatmap between samples, heat map rug, and PCA and saving to the WD
+SS_Correlation_Table_Cor = cor(em_scaled, method = "spearman", use = "pairwise.complete.obs" )
+SS_correlations_melted = melt(SS_Correlation_Table_Cor)
+sampe_cor_heatmap = ggplot(SS_correlations_melted, aes(x=Var1, y=Var2, fill=value))+ geom_tile()+
+  scale_fill_gradientn(limits= c(-1, 1), colours = colorRampPalette(c("blue","orange","red","darkred"))(100))+
+  theme(axis.title = element_blank(),axis.text.x = element_text(angle = 90, hjust = 1,face="bold"),axis.text = element_text(hjust = 1,face="bold"))
+sampe_cor_heatmap
+
+save_plot(sampe_cor_heatmap,"Sample correlation plot.svg",5,5)
+
+################################################################################################
+rug= make_rug(ss$SAMPLE_GROUP, sample_group_colours)
+rug
+save_plot(rug,"heatmap rug.svg",1,6)
+##########################################################################################################
+#PCA
+make_pc1_pc2(em_scaled,ss$SAMPLE_GROUP,sample_group_colours,sample_group_label)
+
+make_pc3_pc4(em_scaled,ss$SAMPLE_GROUP,sample_group_colours,sample_group_label)
+
+################################################################################################
+#barchart of significant genes
+plot_table = data.frame(Group = c("MDM2I vs DMSO", "BETI vs DMSO", "COMBO vs DMSO"), Number = c(length(sig_m_v_d),length(sig_b_v_d), length(sig_combo)))
+
+barchat_sig=ggplot(plot_table, aes(x = Group, y = Number)) +
+  geom_bar(stat = "identity", fill="azure4", width = 0.6) +
+  geom_text(aes(label = Number), vjust = -0.5)+
+  labs(y = "Number of significant genes", x = "") +
+  theme_classic() +
+  theme(legend.position = "none")
+barchat_sig
+save_plot(barchat_sig,"Barchat for sig genes.svg",4,4)
+
+#####including and down regulation
+m_v_d__up_reg=sum(master$sig.m_v_d==TRUE &  master$log2fold.m_v_d> 1)
+m_v_d__down_reg=sum(master$sig.m_v_d==TRUE &  master$log2fold.m_v_d< -1)
+
+b_v_d_up_reg=sum(master$sig.b_v_d==TRUE &  master$log2fold.b_v_d> 1)
+b_v_d_down_reg=sum(master$sig.b_v_d==TRUE &  master$log2fold.b_v_d< -1)
+
+c_v_d_up_reg=sum(master$sig.c_v_d==TRUE &  master$log2fold.c_v_d > 1)
+c_v_d_down_reg=sum(master$sig.c_v_d==TRUE &  master$log2fold.c_v_d < -1)
+
+reg_table = data.frame(
+  group = rep(c("MDM2I vs DMSO", "BETI vs DMSO", "Combo vs DMSO"), each = 2),
+  Change  = rep(c("Up", "Down"), times = 3),
+  number = c(m_v_d__up_reg, m_v_d__down_reg,
+             b_v_d_up_reg, b_v_d_down_reg,
+             c_v_d_up_reg, c_v_d_down_reg))
+
+comparison_bar=ggplot(reg_table, aes(x = group, y = number, fill = Change)) +
+  geom_bar(stat = "identity",position = position_dodge(width = 0.6), width = 0.5) +
+  geom_text(aes(label = number), position = position_dodge(width = 0.6),vjust = -0.5)+
+  labs(x="Treatment Groups",y="Number of significant genes", )+
+  scale_fill_manual(values = c("Up" = "darkred", "Down" = "blue"))+
+  theme_classic()
+comparison_bar
+save_plot(comparison_bar,"Barchat for up and down reg genes.svg",4,5)
+
+##########################################################################################################
+##Venn diagram
+venn_data = list("B_v_D" = sig_b_v_d, "M_v_D" = sig_m_v_d, "COMBO"=sig_combo)
+venn=plot(euler(venn_data, shape = "ellipse"), quantities = TRUE)
+venn
+
+#coloured Venn diagram
+venn = plot(
+  euler(venn_data, shape = "ellipse"),
+  fills = list( fill = c("deeppink2", "darkorchid", "darkgreen"),alpha = 0.6),
+  edges = list( col = "black",lwd = 2 ),
+  labels = list(col = "black",font = 2,cex = 1.2),
+  quantities = list( type = "counts",cex = 1.2,col = "black"))
+venn
+
+save_plot(venn,"Venn diagram plot.svg",4,4)
+
+#overlap p-value using a hypergeometric test
+group1 = nrow(subset(master, sig.b_v_d == TRUE ))
+group2 = nrow(subset(master, sig.m_v_d == TRUE))
+group3= nrow(subset(master, sig.c_v_d == TRUE ))
+total = nrow(master)
+
+#group 1 vs 2
+overlap12 = nrow(subset(master, sig.b_v_d== TRUE & sig.m_v_d == TRUE))
+phyper(overlap12-1, group2, total-group2, group1,lower.tail= FALSE)
+
+#group 1 vs 3
+overlap13 = nrow(subset(master, sig.b_v_d== TRUE & sig.c_v_d == TRUE))
+phyper(overlap13-1, group3, total-group3, group1,lower.tail= FALSE)
+
+#group 2 vs 3
+overlap23 = nrow(subset(master, sig.m_v_d== TRUE & sig.c_v_d == TRUE))
+phyper(overlap23-1, group3, total-group3, group2,lower.tail= FALSE)
+##########################################################################################################
+#DEG overlap barplot
+overlap_table = data.frame(group = c("BETI only", "MDM2I only", "Combo only","All"),
+                     count = c(length(sig_b_v_d_only ),
+                               length(sig_m_v_d_only),
+                               length(sig_combo_only),
+                               length(sig_all)))
+
+barplot_DEG=ggplot(overlap_table, aes(x = group, y = count)) +
+  geom_bar(stat = "identity", fill = "azure4") +
+  geom_text(aes(label = count), vjust = -0.5) +
+  theme_classic()+
+  xlab("")
+barplot_DEG
+save_plot(barplot_DEG,"DEG overlap barplot.svg",4,4)
+##################################################################################
+#Fold – vs – Fold plot
+#m_v_d vs b_v_d
+cor.test(master$log2fold.m_v_d , master$log2fold.b_v_d)
+mvd_bvd_fold=make_fold_plot(master,master$sig.m_v_d,master$sig.b_v_d,"log2fold.m_v_d","log2fold.b_v_d")+
+  labs(title="Pearson correretion coeficient=0.5",x="M v D log2fold",y="B v D log2fold ")
+mvd_bvd_fold
+save_plot(mvd_bvd_fold,"mvd_bvd_fold plot.svg",5,5)
+
+#m_v_d vs c_v_d
+cor.test(master$log2fold.m_v_d , master$log2fold.c_v_d)
+mvd_cvd_fold=make_fold_plot(master,master$sig.m_v_d,master$sig.c_v_d,"log2fold.m_v_d","log2fold.c_v_d")+
+  labs(title="Pearson correretion coeficient=0.37",x="M v D log2fold",y="C v D log2fold ")
+mvd_cvd_fold
+save_plot(mvd_cvd_fold,"mvd_cvd_fold.svg",5,5)
+
+#b_v_d Vs c_v_d
+cor.test(master$log2fold.b_v_d , master$log2fold.c_v_d)
+
+bvd_cvd_fold=make_fold_plot(master,master$sig.b_v_d,master$sig.c_v_d,"log2fold.b_v_d","log2fold.c_v_d")+
+  labs(title="Pearson correretion coeficient=0.740",x="M v D log2fold",y="C v D log2fold ")
+bvd_cvd_fold
+save_plot(bvd_cvd_fold,"bvd_cvd_fold.svg",5,5)
+
+#################################################################################################
+#############location of significant genes on chromosomes
+
+chrom_plot(master, "sig.m_v_d","log2fold.m_v_d") 
+chrom_plot(master, "sig.b_v_d","log2fold.b_v_d")
+chrom_plot(master, "sig.c_v_d","log2fold.c_v_d")  
+
+#viewing chromosome genes on a 21
+chrom_data = subset(master, chromosome == "chr21")
+chrom_plot(chrom_data, "sig.m_v_d","log2fold.m_v_d")
+chrom_plot(chrom_data, "sig.b_v_d","log2fold.b_v_d")
+chrom_plot(chrom_data, "sig.c_v_d","log2fold.c_v_d")
+
+p1=ggplot(subset(master, sig.m_v_d == TRUE), aes(x = chromosome, y = -log10(p.c_v_d), color = chromosome)) +
+  geom_point(size = 1)+
+  theme_bw()
+
+p2=ggplot(subset(master, sig.b_v_d == TRUE), aes(x = chromosome, y = -log10(p.c_v_d), color = chromosome)) +
+  geom_point(size = 1)+
+  theme_bw()
+
+p3=ggplot(subset(master, sig.c_v_d == TRUE), aes(x = chromosome, y = -log10(p.c_v_d), color = chromosome)) +
+  geom_point(size = 1)+
+  theme_bw()
+p1+p2+p3
+###############################################################################################################
+#getting all significant genes for  signature analysis
+sig_genes_heatmap=make_heatmap(em_scaled, sig_any)
+sig_genes_heatmap
+save_plot(sig_genes_heatmap,"sig genes heatmap.svg",4,4)
+
+sig_any_metagene=make_metagene(em_scaled, sig_any,ss$SAMPLE_GROUP,sample_group_colours,sample_group_label)
+sig_any_metagene
+save_plot(sig_any_metagene,"sig_any_metagene.svg",4,4)
+
+save_plot(sig_genes_heatmap+sig_any_metagene,"Overall signature.svg",4,7)
+
+#using k clusturing to find signatures 
+#Elbow plot method
+fviz_nbclust(em_sig_any, kmeans, method = "wss")
+km = kmeans(em_sig_any, 3, iter.max = 10, nstart = 1)
+
+#extracting genes and there clusters it with:
+clusters = data.frame(km$cluster) 
+names(clusters)="cluster"
+
+## get the genes in e.g. cluster 1
+cluster_1_genes = row.names(subset(clusters, cluster == 1))
+cluster_2_genes = row.names(subset(clusters, cluster == 2))
+cluster_3_genes = row.names(subset(clusters, cluster == 3))
+
+#to view
+make_heatmap(em_sig_any, cluster_1_genes)
+make_heatmap(em_sig_any, cluster_2_genes)
+make_heatmap(em_sig_any, cluster_3_genes)
+
+signature_result=plot_signature("org.Hs.eg.db",cluster_1_genes,em_scaled,ss$SAMPLE_GROUP, "SYMBOL",sample_group_colours,sample_group_label)
+signature_result$metagene
+signature_result$signature_heatmap
+signature_result$pathway_results$plots$ggp.barplot
+
+signature_results=plot_signature("org.Hs.eg.db",cluster_2_genes,em_scaled,ss$SAMPLE_GROUP,"SYMBOL",sample_group_colours,sample_group_label)
+signature_results$metagene
+signature_results$signature_heatmap
+signature_results$pathway_results$plots$ggp.barplot
+
+signature_results= plot_signature("org.Hs.eg.db",cluster_3_genes,em_scaled,ss$SAMPLE_GROUP,"SYMBOL",sample_group_colours,sample_group_label)
+signature_results$metagene
+signature_results$signature_heatmap
+signature_results$pathway_results$plots$ggp.barplot
+
+
