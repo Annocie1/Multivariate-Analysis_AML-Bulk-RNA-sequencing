@@ -1,0 +1,187 @@
+setwd("~/Documents/Modules/BIOL5421/assessment/part2/BIOL 5421 assessment 2/DE_Combo_vs_DMSO")
+
+pacman::p_load (ggplot2, ggrepel, reshape2,  amap, clusterProfiler, org.Hs.eg.db, STRINGdb,devEMF,svglite,ggthemes)
+
+ss = read.table("~/Documents/Modules/BIOL5421/assessment/part2/part2_datasets/P53_activation_AML/SS.csv", header = TRUE, sep="\t")
+em = read.table("~/Documents/Modules/BIOL5421/assessment/part2/part2_datasets/P53_activation_AML/EM.csv", header = TRUE, row.names = 1, sep="\t")
+de_combo_vs_DMSO=read.table("~/Documents/Modules/BIOL5421/assessment/part2/part2_datasets/P53_activation_AML/DE_Combo_vs_DMSO.csv",header = TRUE, row.names = 1, sep="\t")
+anno=read.table("~/Documents/Modules/BIOL5421/assessment/part2/part2_datasets/P53_activation_AML/ANNO.csv",header = TRUE, row.names = 1, sep="\t")
+source("~/Documents/Modules/BIOL5421/assessment/part2/BIOL 5421 assessment 2/function.r")
+
+
+#subsetting ss,em to contain two groups
+ss=ss[-c(4:9),]
+em=em[,-c(4:9)]
+
+#sample group colours for consistency
+ss$SAMPLE_GROUP=factor(ss$SAMPLE_GROUP, levels=c("DMSO","Combo"))
+sample_group_colours = c(DMSO="deepskyblue",Combo="darkgreen")
+sample_group_label=c(DMSO="DMSO",Combo="Combo")
+
+#Master parsing
+master_temp=merge(em,anno, by.x=0, by.y=0)
+master=merge(master_temp,de_combo_vs_DMSO, by.x=1,by.y=0) 
+
+row.names(master) = master[ ,"SYMBOL"]
+master = na.omit(master[,-c(1,8)])
+master= master[order(master[ ,"p"], decreasing=FALSE),]
+
+master$Row.means = rowMeans(master[,1:6])
+master$mlog10p = -log10(master$p)
+master$sig = as.factor(master$p.adj < 0.05 & abs(master$log2fold) > 1.0)
+
+#sub-setting master and storing significant genes.
+master_sig =subset(master, p.adj < 0.05 & abs(log2fold) >1)
+sig_genes= row.names(master_sig)
+
+master_sig_up = subset(master_sig, log2fold>1)
+master_sig_up_top5 = master_sig_up[1:5,]
+up_regulated_genes= row.names(master_sig_up)
+
+master_sig_down = subset(master_sig,log2fold < -1)
+master_sig_down_top5= master_sig_down[1:5,]
+down_regulated_genes=row.names(master_sig_down)
+
+#creating em_symbols and scaling and filtering for sig genes
+em_symbols= master[, ss$SAMPLE]
+em_scaled=na.omit(data.frame(t(scale(t(em_symbols)))))
+em_scaled_sig=em_scaled[sig_genes, ]
+
+#saving to the working directorate
+write.table(em_symbols, file="~/Documents/Modules/BIOL5421/assessment/part2/BIOL 5421 assessment 2/DE_Combo_vs_DMSO/em_symbols.csv", sep="\t")
+write.table(em_scaled, file="~/Documents/Modules/BIOL5421/assessment/part2/BIOL 5421 assessment 2/DE_Combo_vs_DMSO/em_scaled.csv", sep="\t")
+write.table(master, file="~/Documents/Modules/BIOL5421/assessment/part2/BIOL 5421 assessment 2/DE_Combo_vs_DMSO/master.csv", sep="\t")
+write.table(master_sig, file="~/Documents/Modules/BIOL5421/assessment/part2/BIOL 5421 assessment 2/DE_Combo_vs_DMSO/master_sig.csv", sep="\t")
+write.table(em_scaled_sig, file="~/Documents/Modules/BIOL5421/assessment/part2/BIOL 5421 assessment 2/DE_Combo_vs_DMSOem_scaled_sig.csv", sep="\t")
+
+##################### Expression density plot########################################
+#To make density plots color-coded (sample_group)
+em.m= melt(em)
+em.m$sample_group = ""
+
+#Search for the keyword and add sample group 
+indeces = grep("Combo",em.m$variable)
+em.m$sample_group[indeces] = "Combo"
+
+indeces = grep("DMSO",em.m$variable)
+em.m$sample_group[indeces] = "DMSO"
+
+density_plot=ggplot(em.m, aes(x=log10(value+0.01),fill = sample_group))+
+  geom_density(size= 1)+
+  scale_fill_manual(values=sample_group_colours, label = sample_group_label)+
+  facet_wrap(~variable, ncol=3)+
+  labs(y="Gene expression density")+
+  plot_theme
+density_plot
+save_plot(density_plot,"Expression Density.svg",4,4)
+
+#############################################################################################
+#making PCA plots
+PCA=make_pc1_pc2(em_scaled,ss$SAMPLE_GROUP,sample_group_colours,sample_group_label)
+PCA
+save_plot(PCA,"PCA plot.svg",4,4)
+make_pc3_pc4(em,ss$SAMPLE_GROUP,sample_group_colours,sample_group_label)
+#############################################################################################
+#making an MA plot
+plot_MA=make_MA()+labs(title = "COMBO vs DMSO")
+plot_MA
+save_plot(plot_MA,"MA plot.svg",4,4)
+#############################################################################################
+##### a volcano plot,heatmap for significant genes and rug
+volcano_plot=make_volcano()+labs(title = "COMBO vs DMSO")+xlim(-10,10)
+volcano_plot
+save_plot(volcano_plot,"volcano plot.svg",6,6)
+#############################################################################################
+#bar chart of significant genes
+plot_table = data.frame(direction = c("Up", "Down"), count = c(nrow(master_sig_up), nrow(master_sig_down)))
+barchat_sig=ggplot(plot_table, aes(x = direction, y = count, fill = direction)) +
+  geom_bar(stat = "identity",width = 0.4) +
+  geom_text(aes(label = count), vjust = -0.5) +
+  scale_fill_manual(values = c("blue", "darkred")) +
+  labs(y = "Number of significant genes", x = "Combo vs DMSO") +
+  theme_classic() +
+  theme(legend.position = "none")
+barchat_sig
+save_plot(barchat_sig,"barchat_sig.svg",4,4)
+
+#heatmap
+heatmap=make_heatmap (em_scaled, sig_genes)
+heatmap
+save_plot(heatmap,"heatmap Significant genes.svg",4,4)
+
+rug=make_rug(ss$SAMPLE_GROUP,sample_group_colours)
+rug
+save_plot(rug,"heatmap rug.svg",1,6)
+
+
+#######boxplot, violin and jitter plot of the top 10 most significant gens################
+boxplot=make_multi_boxplot(em_symbols, sig_genes[1:10], ss$SAMPLE_GROUP,sample_group_colours,sample_group_label)
+boxplot
+save_plot(boxplot,"boxplot Significant genes.svg",5,5)
+
+sig_violin=make_multi_violin(em_symbols, sig_genes[1:6], ss$SAMPLE_GROUP,sample_group_colours,sample_group_label)
+sig_violin
+save_plot(sig_violin,"Violin Significant genes.svg",5,5)
+
+#############################################################################################
+###Pathway analysis: 1. Over Representation Analysis (ORA) #########
+#for all significant genes
+pathway_results = do_pathway("org.Hs.eg.db",sig_genes,em_scaled,ss$SAMPLE_GROUP,
+                             "SYMBOL",sample_group_colours,sample_group_label)
+
+pathway_results$plots$ggp.barplot+labs(title="All significant genes")
+pathway_results$plots$ggp.dotplot+labs(title="All significant genes")
+
+pathway_results$plots$ontology1$ggp.heatmap+labs(title="All significant genes")
+pathway_results$plots$ontology1$ggp.boxplot+labs(title="All significant genes")
+
+pathway_results$plots$ontology2$ggp.heatmap+labs(title="All significant genes")
+pathway_results$plots$ontology2$ggp.boxplot+labs(title="All significant genes")
+
+pathway_results$plots$ontology3$ggp.heatmap+labs(title="All significant genes")
+pathway_results$plots$ontology3$ggp.boxplot+labs(title="All significant genes")
+
+
+##for  down-regulated genes
+pathway_results = do_pathway("org.Hs.eg.db",down_regulated_genes,em_scaled,ss$SAMPLE_GROUP,
+                             "SYMBOL",sample_group_colours,sample_group_label)
+
+pathway_results$plots$ggp.barplot+labs(title="down-regulated genes")
+pathway_results$plots$ggp.dotplot+labs(title="down-regulated genes")
+
+pathway_results$plots$ontology1$ggp.heatmap+labs(title="down-regulated genes")
+pathway_results$plots$ontology1$ggp.boxplot+labs(title="down-regulated genes")
+
+pathway_results$plots$ontology2$ggp.heatmap+labs(title="down-regulated genes")
+pathway_results$plots$ontology2$ggp.boxplot+labs(title="down-regulated genes")
+
+
+pathway_results$plots$ontology3$ggp.heatmap+labs(title="down-regulated genes")
+pathway_results$plots$ontology3$ggp.boxplot+labs(title="down-regulated genes")
+
+##for  up-regulated genes
+pathway_results = do_pathway("org.Hs.eg.db",up_regulated_genes,em_scaled,ss$SAMPLE_GROUP,
+                             "SYMBOL",sample_group_colours,sample_group_label)
+
+pathway_results$plots$ggp.barplot+labs(title=" up-regulated gene")
+pathway_results$plots$ggp.dotplot+labs(title="up-regulated gene")
+
+pathway_results$plots$ontology1$ggp.heatmap+labs(title="up-regulated genes")
+pathway_results$plots$ontology1$ggp.boxplot+labs(title="up-regulated genes")
+
+
+pathway_results$plots$ontology2$ggp.heatmap+labs(title="up-regulated genes")
+pathway_results$plots$ontology2$ggp.boxplot+labs(title="up-regulated genes")
+
+
+pathway_results$plots$ontology3$ggp.heatmap+labs(title="up-regulated genes")
+pathway_results$plots$ontology3$ggp.boxplot+labs(title="up-regulated genes")
+
+#2. GSEA
+
+gse_results =do_gsea_pathway(master$log2fold,master,em_scaled,ss$SAMPLE_GROUP,sample_group_colours,sample_group_label)
+
+gse_results$plots$ggp.gse_dotplot
+gse_results$plots$ontology1$ggp.boxplot
+
+
