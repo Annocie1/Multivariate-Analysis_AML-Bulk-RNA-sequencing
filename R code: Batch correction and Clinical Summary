@@ -1,0 +1,439 @@
+setwd("~/Documents/Modules/BIOL5421/assessment/part1")
+#installing and loading library
+install.packages("GGally")
+BiocManager::install("DESeq2")
+install.packages("gt")
+BiocManager::install("sva")
+
+library(GGally)
+library(ggplot2)
+library(gtsummary)
+library(gt)
+library(DESeq2)
+library(sva)
+library(svglite)
+
+counts = read.table("~/Documents/Modules/counts.csv", header = TRUE, row.names = 1, sep="\t")
+ss = read.table("~/Documents/Modules/ss.csv", header = TRUE, sep="\t")
+ss_per_patient = read.table("~/Documents/Modules/ss_per_patient.csv", header = TRUE, sep="\t")
+
+#Making discrete values as factors
+ss$sample_group=factor(ss$sample_group, levels = c("HC","GB_1","GB_2"))
+ss$sample=as.factor(ss$sample)
+ss$patient=as.factor(ss$patient)
+ss$batch=as.factor(ss$batch)
+ss$censored=as.factor(ss$censored)
+
+#summary table 
+ss_summary_table= add_p(tbl_summary(ss, by = sample_group, include = c("age","bmi","censored","days_survived","slide_area","batch"),
+                                  statistic = list(all_continuous()~"{mean}({sd})",all_categorical()~"{n}/{N}({p}%)")))
+ss_summary_table
+
+
+#saving the table as an image..docx used for word
+ss_summary_table_gt = as_gt(ss_summary_table)
+gtsave(ss_summary_table_gt,"Three groups summary table gt.png")
+
+#summary table 2 (GB1 vs GB2)
+summary_table_set_2= add_p(tbl_summary(ss_per_patient, by = sample_group, include = c("slide_area","age","batch","bmi","days_survived","censored"),
+                                  statistic = list(all_continuous()~"{mean}({sd})",all_categorical()~"{n}/{N}({p}%)")))
+summary_table_set_2
+#Normalising and performing DESeq
+
+nrow(counts)
+counts = subset(counts, apply(counts, 1, mean) >= 1)#removing rows with a mean of <= 1 read
+nrow(counts)
+
+counts=as.matrix(counts)
+
+dds = DESeqDataSetFromMatrix(countData=counts, colData=ss, design=~sample_group)
+dds = DESeq(dds)
+
+#making em by extracting the normalised counts  from dds 
+em = data.frame(round(counts(dds, normalized=TRUE),2)) 
+
+#saving em as csv file
+em_out = cbind(row.names(em), em)
+names(em_out)[1] = "ID"
+write.table(em_out, file="EM.csv",row.names=FALSE, sep="\t", quote = FALSE)
+
+#doing PCA's
+#conveting continuous variables to discrete
+
+slide_area_discrete = cut(ss$slide_area,2,labels=c("small","large"))
+slide_area_discrete
+ss$slide_area_discrete=  slide_area_discrete
+
+days_survived_discrete = cut(ss$days_survived,2,labels=c("few","many"))
+days_survived_discrete
+ss$days_survived_discrete =  days_survived_discrete
+
+age_discrete = cut(ss$age,2,labels=c("low","high"))
+age_discrete
+ss$age_discrete=  age_discrete
+
+bmi_discrete = cut(ss$bmi,2,labels=c("low","high"))
+bmi_discrete
+ss$bmi_discrete=bmi_discrete
+
+#PCA functions
+
+make_pc1_pc2 = function(colour_groups, e_data)
+{
+  e_data_scaled = na.omit(data.frame(t(scale(t(e_data)))))
+  # run PCA
+  xx = prcomp(t(e_data_scaled))
+  pca_coordinates = data.frame(xx$x)
+  # get % variation
+  vars = apply(xx$x, 2, var)
+  prop_x = round(vars["PC1"] / sum(vars),4) * 100
+  prop_y = round(vars["PC2"] / sum(vars),4) * 100
+  x_axis_label = paste("PC1 (" ,prop_x, "%)", sep="")
+  y_axis_label = paste("PC2 (" ,prop_y, "%)", sep="")
+  # plot
+  ggp = ggplot(pca_coordinates, aes(x=PC1, y= PC2, colour = colour_groups)) +
+    geom_point() +
+    labs(title = "PCA", x= x_axis_label, y= y_axis_label) +
+    theme_bw()+ theme(legend.position = "bottom")
+  return(ggp)
+}
+
+make_pc3_pc4 = function(colour_groups, e_data)
+{
+  e_data_scaled = na.omit(data.frame(t(scale(t(e_data)))))
+  # run PCA
+  xx = prcomp(t(e_data_scaled))
+  pca_coordinates = data.frame(xx$x)
+  # get % variation
+  vars = apply(xx$x, 2, var)
+  prop_x = round(vars["PC3"] / sum(vars),4) * 100
+  prop_y = round(vars["PC4"] / sum(vars),4) * 100
+  x_axis_label = paste("PC3 (" ,prop_x, "%)", sep="")
+  y_axis_label = paste("PC4 (" ,prop_y, "%)", sep="")
+  # plot
+  ggp = ggplot(pca_coordinates, aes(x=PC3, y= PC4, colour = colour_groups)) +
+    geom_point() +
+    labs(title = "PCA", x= x_axis_label, y= y_axis_label) +
+    theme_bw()+ theme(legend.position = "bottom")
+  return(ggp)
+}
+
+#saving plots to the working directory function
+save_plot= function(plot,plot_name)
+{
+  svglite(plot_name,width = 3.5, height =4)
+  print(plot)
+  dev.off()
+}
+
+#clinical and technical PCA plots and saving them
+
+batch_pca=make_pc1_pc2(ss$batch, em)+labs(title="Batch")
+batch_pca
+save_plot(batch_pca,"batch_pca.svg")
+
+age_pca=make_pc1_pc2(ss$age_discrete, em)+labs(title="Age")
+age_pca
+save_plot(age_pca,"age_pca.svg")
+
+censored_pca=make_pc1_pc2(ss$censored, em)+labs(title="Censored")
+censored_pca
+save_plot(censored_pca,"censored_pca.svg")
+
+days_survived_pca=make_pc1_pc2(ss$days_survived_discrete, em)+labs(title="Days survived")
+days_survived_pca
+save_plot(days_survived_pca,"days_survived_pca.svg")
+
+slide_area_pca=make_pc1_pc2(ss$slide_area_discrete, em)+labs(title="Slide area")
+slide_area_pca
+save_plot(slide_area_pca,"slide_area_pca.svg")
+
+sample_group_pca=make_pc1_pc2(ss$sample_group, em)+labs(title="Sample group")
+sample_group_pca
+save_plot(sample_group_pca,"sample_group_pca.svg")
+
+bmi_pca=make_pc1_pc2(ss$bmi_discrete, em)+labs(title="BMI")
+bmi_pca
+save_plot(bmi_pca,"bmi_pca.svg")
+
+#viewing by pc3 and 4 to make comparison
+make_pc3_pc4(ss$batch, em)
+make_pc3_pc4(ss$age_discrete, em)
+make_pc3_pc4(ss$censored, em)
+make_pc3_pc4(ss$slide_area_discrete, em)
+make_pc3_pc4(ss$bmi_discrete, em)
+make_pc3_pc4(ss$days_survived_discrete, em)
+make_pc3_pc4(ss$sample_group, em)
+
+####################################
+
+#from here not submitted
+setwd("~/Documents/Modules/BIOL5421/assessment/part1")
+install.packages("GGally")
+BiocManager::install("DESeq2")
+install.packages("gt")
+BiocManager::install("sva")
+
+library(GGally)
+library(ggplot2)
+library(gtsummary)
+library(gt)
+library(DESeq2)
+library(sva)
+library(svglite)
+
+counts = read.table("~/Documents/Modules/counts.csv", header = TRUE, row.names = 1, sep="\t")
+ss = read.table("~/Documents/Modules/ss.csv", header = TRUE, sep="\t")
+ss_per_patient = read.table("~/Documents/Modules/assessment/part1/part_1_data/ss_per_patient.csv", header = TRUE, sep="\t")
+
+#Making descrete values as factors
+ss$sample_group=factor(ss$sample_group, levels = c("HC","GB_1","GB_2"))
+ss$sample=as.factor(ss$sample)
+ss$patient=as.factor(ss$patient)
+ss$batch=as.factor(ss$batch)
+ss$censored=as.factor(ss$censored)
+ss_per_patient$censored=as.factor(ss_per_patient$censored)
+
+#summary table 1
+ss_summary_table_main= add_p(tbl_summary(ss, by = sample_group, include = c("age","bmi","censored","days_survived","slide_area"),
+                                         statistic = list(all_continuous()~"{mean}({sd})",all_categorical()~"{n}/{N}({p}%)")))
+ss_summary_table_main
+
+#saving
+ss_summary_table_gt = as_gt(ss_summary_table_main)
+gtsave(ss_summary_table_gt,"Three groups summary table gt.docx")
+
+#summary table 2 (GB1 vs GB2)
+summary_table = add_p(tbl_summary(ss_per_patient, by = sample_group, include = c("slide_area","age","bmi","days_survived","censored"),
+                                  statistic = list(all_continuous()~"{mean}({sd})",all_categorical()~"{n}/{N}({p}%)")))
+summary_table
+
+
+#HC vs GB1...Selecting patients with have GB_1 tumours and for those patients keeping both their HC and GB_1 samples
+HC_vs_GB1 <- ss[ss$patient %in% ss$patient[ss$sample_group == "GB_1"] & ss$sample_group %in% c("HC", "GB_1"),]
+summary_table = add_p(tbl_summary(HC_vs_GB1, by = sample_group, include = c("slide_area","age","bmi","days_survived","censored"),
+                                  statistic = list(all_continuous()~"{mean}({sd})",all_categorical()~"{n}/{N}({p}%)")))
+summary_table
+
+#HC vs GB2 Selecting patients with have GB_2 tumours and for those patients keeping both their HC and GB_2 samples
+HC_vs_GB2 <- ss[ss$patient %in% ss$patient[ss$sample_group == "GB_2"] &ss$sample_group %in% c("HC", "GB_2"),]
+summary_table = add_p(tbl_summary(HC_vs_GB2, by = sample_group, include = c("slide_area","age","bmi","days_survived","censored"),
+                                  statistic = list(all_continuous()~"{mean}({sd})",all_categorical()~"{n}/{N}({p}%)")))
+summary_table
+
+#Normalising
+nrow(counts)
+counts = subset(counts, apply(counts, 1, mean) >= 1)#removing rows with a mean of <= 1 read
+nrow(counts)
+
+counts=as.matrix(counts)
+
+dds = DESeqDataSetFromMatrix(countData=counts, colData=ss, design=~sample_group)
+dds = DESeq(dds)
+
+#making em by extracting the results from dds
+em = data.frame(round(counts(dds, normalized=TRUE),2)) 
+
+#saving em
+em_out = cbind(row.names(em), em)
+names(em_out)[1] = "ID"
+write.table(em_out, file="EM.csv",row.names=FALSE, sep="\t", quote = FALSE)
+
+#doing PCA's
+#making columns for continous values made to descrete
+censored_descrete = cut(ss$censored,2,labels=c("No","Yes"))
+censored_descrete
+ss$censored_descrete =  censored_descrete
+
+slide_area_descrete = cut(ss$slide_area,2,labels=c("small","large"))
+slide_area_descrete
+ss$slide_area_descrete=  slide_area_descrete
+
+days_survived_descrete = cut(ss$days_survived,2,labels=c("few","many"))
+days_survived_descrete
+ss$days_survived_descrete =  days_survived_descrete
+
+age_descrete = cut(ss$slide_area,2,labels=c("low","high"))
+age_descrete
+ss$age_descrete=  age_descrete
+
+bmi_descrete = cut(ss$bmi,2,labels=c("low","high"))
+bmi_descrete
+ss$bmi_descrete=bmi_descrete
+
+
+make_pc1_pc2 = function(colour_groups, e_data)
+{
+  e_data_scaled = na.omit(data.frame(t(scale(t(e_data)))))
+  # run PCA
+  xx = prcomp(t(e_data_scaled))
+  pca_coordinates = data.frame(xx$x)
+  # get % variation
+  vars = apply(xx$x, 2, var)
+  prop_x = round(vars["PC1"] / sum(vars),4) * 100
+  prop_y = round(vars["PC2"] / sum(vars),4) * 100
+  x_axis_label = paste("PC1 (" ,prop_x, "%)", sep="")
+  y_axis_label = paste("PC2 (" ,prop_y, "%)", sep="")
+  # plot
+  ggp = ggplot(pca_coordinates, aes(x=PC1, y= PC2, colour = colour_groups)) +
+    geom_point() +
+    labs(title = "PCA", x= x_axis_label, y= y_axis_label) +
+    theme_bw()+ theme(legend.position = "bottom")
+  return(ggp)
+}
+
+
+make_pc3_pc4 = function(colour_groups, e_data)
+{
+  e_data_scaled = na.omit(data.frame(t(scale(t(e_data)))))
+  # run PCA
+  xx = prcomp(t(e_data_scaled))
+  pca_coordinates = data.frame(xx$x)
+  # get % variation
+  vars = apply(xx$x, 2, var)
+  prop_x = round(vars["PC3"] / sum(vars),4) * 100
+  prop_y = round(vars["PC4"] / sum(vars),4) * 100
+  x_axis_label = paste("PC3 (" ,prop_x, "%)", sep="")
+  y_axis_label = paste("PC4 (" ,prop_y, "%)", sep="")
+  # plot
+  ggp = ggplot(pca_coordinates, aes(x=PC3, y= PC4, colour = colour_groups)) +
+    geom_point() +
+    labs(title = "PCA", x= x_axis_label, y= y_axis_label) +
+    theme_bw()+ theme(legend.position = "bottom")
+  return(ggp)
+}
+
+#saving plots to the working directory
+save_plot= function(plot,plot_name)
+{
+  svglite(plot_name,width = 3, height = 4)
+  print(plot)
+  dev.off()
+}
+
+#PCA plots and saving them
+
+batch_pca=make_pc1_pc2(ss$batch, em)+labs(title="BATCH")
+batch_pca
+save_plot(batch_pca,"batch_pca.svg")
+
+age_pca=make_pc1_pc2(ss$age_descrete, em)+labs(title="AGE")
+age_pca
+save_plot(age_pca,"age_pca.svg")
+
+censored_pca=make_pc1_pc2(ss$censored, em)+labs(title="CENSORED")
+censored_pca
+save_plot(censored_pca,"censored_pca.svg")
+
+days_survived_pca=make_pc1_pc2(ss$days_survived_descrete, em)+labs(title="DAYS SURVIVED")
+days_survived_pca
+save_plot(days_survived_pca,"days_survived_pca.svg")
+
+slide_area_pca=make_pc1_pc2(ss$slide_area_descrete, em)+labs(title="SLIDE AREA")
+slide_area_pca
+save_plot(slide_area_pca,"slide_area_pca.svg")
+
+sample_group_pca=make_pc1_pc2(ss$sample_group, em)+labs(title="SAMPLE GROUP")
+sample_group_pca
+save_plot(sample_group_pca,"sample_group_pca.svg")
+
+bmi_pca=make_pc1_pc2(ss$bmi_descrete, em)+labs(title="BMI")
+bmi_pca
+save_plot(bmi_pca,"bmi_pca.svg")
+
+
+make_pc3_pc4(ss$batch, em)
+make_pc3_pc4(ss$age_descrete, em)
+make_pc3_pc4(ss$censored, em)
+make_pc3_pc4(ss$slide_area_descrete, em)
+make_pc3_pc4(ss$bmi_descrete, em)
+make_pc3_pc4(ss$days_survived_descrete, em)
+make_pc3_pc4(ss$sample_group, em)+labs(title="SAMPLE GROUP")
+
+batch1= factor(ss$slide_area_descrete)
+batch2= factor(ss$batch)
+age = factor(ss$age_descrete)
+
+
+# Correct #1
+counts_corrected = ComBat_seq(as.matrix(counts), batch=batch1, group=ss$sample_group)
+
+# Run DESeq2 – using the corrected counts
+dds = DESeqDataSetFromMatrix(countData=counts_corrected, colData=ss, design=~sample_group)
+dds = DESeq(dds)
+
+em_corrected = data.frame(round(counts(dds, normalized=TRUE),2)) 
+
+
+make_pc1_pc2(ss$batch, em_corrected)
+make_pc1_pc2(ss$age_descrete, em_corrected)
+make_pc1_pc2(ss$censored, em_corrected)
+make_pc1_pc2(ss$slide_area_descrete, em_corrected)
+make_pc1_pc2(ss$bmi_descrete, em_corrected)
+make_pc1_pc2(ss$days_survived_descrete, em_corrected)
+make_pc1_pc2(ss$sample_group, em_corrected)
+
+
+
+shapiro.test(ss$age)
+#age is not normally distributed
+shapiro.test(ss$bmi)
+#BMI is not normally distributed
+shapiro.test(ss$slide_area)
+#slide area not normally distributed.
+shapiro.test(ss$days_survived)
+#not normally
+
+
+#doing normality test on each grouping
+ss_HC=ss[ss$sample_group=="HC",]
+
+shapiro.test(ss_HC$age)
+#age is normally distributed
+shapiro.test(ss_HC$bmi)
+#BMI is not normally distributed
+shapiro.test(ss_HC$slide_area)
+#slide area is normally distributed.
+shapiro.test(ss_HC$days_survived)
+#is normally distributed
+
+
+shapiro.test(ss_GB$age)
+#age is normally distributed
+shapiro.test(ss_GB$bmi)
+#BMI is not normally distributed
+
+shapiro.test(ss_GB$slide_area)
+#slide area is normally distributed.
+shapiro.test(ss_GB$days_survived)
+#is  normally distributed
+
+
+#run a t.test on normally distributed data
+t_test_AGE <- t.test(ss_HC$age, ss_GB$age)#p-value is 1, no difference
+t_test_days_survived <- t.test(ss_HC$days_survived, ss_GB$days_survived)#p-value is 1, no difference
+t_test_slide_area <- t.test(ss_HC$slide_area, ss_GB$slide_area)#p-value is 1.579342e-19, difference meaning that there in a need for collection
+
+# Invent some numbers
+values_1 = c(ss_HC$age, ss_HC$days_survived,ss_HC$slide_area)
+values_2 = c(ss_GB$age, )
+# Do a t-test
+t_result = t.test(values_1, values_2)
+
+#Run Wilcoxon Rank Sum test for non-normal distribution(BMI)
+wilcox_test_BMI <- wilcox.test(ss_HC$bmi, ss_GB$bmi)#p-value is 1, no difference
+
+#chi square test for discrete
+batch_Chisq_Test = chisq.test(ss$batch, ss$sample_group)
+
+
+
+
+
+
+
+
+
+
+
+
